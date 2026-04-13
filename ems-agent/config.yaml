@@ -17,17 +17,13 @@ options:
   grid_agent:
     provider: simulation
     api_key: ""
-  heaters: []
-  ev_chargers: []
+  devices: []
 schema:
   grid_agent:
     provider: list(tibber|simulation)
     api_key: password?
-  heaters:
+  devices:
     - name: str
-      switch_entity: str
-      max_price_cents: float
-  ev_chargers:
-    - name: str
-      switch_entity: str
-      max_price_cents: float
+      type: list(ev_charger|heater|battery|generic)
+      entity: str
+      max_price: float
