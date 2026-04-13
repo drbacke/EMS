@@ -7,9 +7,15 @@ boot: auto
 init: false
 hassio_api: true
 homeassistant_api: true
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
 options:
   tibber_api_key: ""
   target_entity: ""
 schema:
-  tibber_api_key: password
+  tibber_api_key: password?
   target_entity: str
