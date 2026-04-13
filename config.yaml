@@ -1,0 +1,15 @@
+name: "EMS AI"
+version: "0.1.0"
+slug: "ems_ai"
+description: "Multi-Agenten-System fuer Energiemanagement"
+startup: services
+boot: auto
+init: false
+hassio_api: true
+homeassistant_api: true
+options:
+  tibber_api_key: ""
+  target_entity: ""
+schema:
+  tibber_api_key: password
+  target_entity: str
