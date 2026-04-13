@@ -20,7 +20,12 @@ def load_options() -> dict:
     if not OPTIONS_PATH.exists():
         raise FileNotFoundError(f"Options file not found: {OPTIONS_PATH}")
     with OPTIONS_PATH.open("r", encoding="utf-8") as file:
-        return json.load(file)
+        loaded = json.load(file)
+    return {
+        "grid_agent": loaded.get("grid_agent", {}),
+        "heaters": loaded.get("heaters", []),
+        "ev_chargers": loaded.get("ev_chargers", []),
+    }
 
 
 def load_config_text() -> str:
@@ -30,36 +35,34 @@ def load_config_text() -> str:
 
 
 def build_dynamic_consumers(
-    agent_configs: list[dict[str, Any]],
+    group_name: str,
+    consumer_configs: list[dict[str, Any]],
     ha_adapter: HomeAssistantAdapter,
 ) -> list[ConsumerAgent]:
     consumers: list[ConsumerAgent] = []
-    for index, config in enumerate(agent_configs, start=1):
-        agent_type = str(config.get("name", "")).strip().lower()
-        entity = str(config.get("entity", "")).strip()
-        max_price_raw = config.get("max_price", 0.0)
+    for index, config in enumerate(consumer_configs, start=1):
+        label = str(config.get("name", "")).strip() or f"{group_name}_{index}"
+        entity = str(config.get("switch_entity", "")).strip()
+        max_price_cents_raw = config.get("max_price_cents", 0.0)
 
         if not entity:
-            print(f"[Main] Ueberspringe Agent #{index}: 'entity' fehlt.")
+            print(f"[Main] Ueberspringe {group_name} #{index}: 'switch_entity' fehlt.")
             continue
 
-        if agent_type in {"consumer", "consumeragent", ""}:
-            try:
-                max_price = float(max_price_raw)
-            except (TypeError, ValueError):
-                print(f"[Main] Ueberspringe Agent '{entity}': max_price ungueltig.")
-                continue
+        try:
+            max_price_limit = float(max_price_cents_raw) / 100.0
+        except (TypeError, ValueError):
+            print(f"[Main] Ueberspringe '{label}': max_price_cents ungueltig.")
+            continue
 
-            consumers.append(
-                ConsumerAgent(
-                    name=f"ConsumerAgent:{entity}",
-                    entity_id=entity,
-                    max_price_limit=max_price,
-                    ha_adapter=ha_adapter,
-                )
+        consumers.append(
+            ConsumerAgent(
+                name=f"{group_name}:{label}",
+                entity_id=entity,
+                max_price_limit=max_price_limit,
+                ha_adapter=ha_adapter,
             )
-        else:
-            print(f"[Main] Unbekannter Agent-Typ '{agent_type}' fuer Entity '{entity}'.")
+        )
     return consumers
 
 
@@ -68,24 +71,42 @@ def main() -> None:
     options = load_options()
 
     supervisor_token = os.getenv("SUPERVISOR_TOKEN")
-    tibber_api_key = options.get("tibber_api_key")
-    agent_configs = options.get("agents", [])
+    grid_agent_cfg = options.get("grid_agent", {})
+    heaters_cfg = options.get("heaters", [])
+    ev_chargers_cfg = options.get("ev_chargers", [])
 
     if not supervisor_token:
         raise EnvironmentError("Missing environment variable: SUPERVISOR_TOKEN")
-    if not isinstance(agent_configs, list):
-        raise ValueError("Invalid option: 'agents' must be a list")
+    if not isinstance(grid_agent_cfg, dict):
+        raise ValueError("Invalid option: 'grid_agent' must be an object")
+    if not isinstance(heaters_cfg, list):
+        raise ValueError("Invalid option: 'heaters' must be a list")
+    if not isinstance(ev_chargers_cfg, list):
+        raise ValueError("Invalid option: 'ev_chargers' must be a list")
+
+    provider = str(grid_agent_cfg.get("provider", "simulation")).strip().lower()
+    api_key = str(grid_agent_cfg.get("api_key", "")).strip()
 
     ha_adapter = HomeAssistantAdapter(supervisor_token)
-    grid_agent = GridAgent(tibber_api_key=tibber_api_key)
+    if provider == "tibber":
+        grid_agent = GridAgent(tibber_api_key=api_key or None)
+    elif provider == "simulation":
+        grid_agent = GridAgent(tibber_api_key=None)
+    else:
+        print(f"[Main] Unbekannter grid_agent.provider '{provider}', nutze simulation.")
+        grid_agent = GridAgent(tibber_api_key=None)
     broker = EnergyBroker(seller=grid_agent)
 
-    consumers = build_dynamic_consumers(agent_configs, ha_adapter)
+    consumers = []
+    consumers.extend(build_dynamic_consumers("heater", heaters_cfg, ha_adapter))
+    consumers.extend(build_dynamic_consumers("ev_charger", ev_chargers_cfg, ha_adapter))
     for consumer in consumers:
         broker.register_buyer(consumer)
 
     print("EMS Entrypoint gestartet.")
     print(f"Config geladen: {'ja' if config_text else 'nein'}")
+    print(f"Grid provider: {provider}")
+    print(f"Heaters: {len(heaters_cfg)}, EV-Chargers: {len(ev_chargers_cfg)}")
     print(f"Konfigurierte Agenten: {len(consumers)}")
 
     if not consumers:

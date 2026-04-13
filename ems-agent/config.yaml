@@ -14,11 +14,20 @@ arch:
   - armv7
   - i386
 options:
-  tibber_api_key: ""
-  agents: []
+  grid_agent:
+    provider: simulation
+    api_key: ""
+  heaters: []
+  ev_chargers: []
 schema:
-  tibber_api_key: password?
-  agents:
+  grid_agent:
+    provider: list(tibber|simulation)
+    api_key: password?
+  heaters:
     - name: str
-      entity: str
-      max_price: float
+      switch_entity: str
+      max_price_cents: float
+  ev_chargers:
+    - name: str
+      switch_entity: str
+      max_price_cents: float
