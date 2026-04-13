@@ -27,6 +27,7 @@ class EnergyBroker:
 
     def match_all(self) -> list[MatchResult]:
         if not self.sellers:
+            print("[Broker] Warnung: Keine Seller registriert, Match wird uebersprungen.")
             return []
 
         seller_prices: list[float] = []

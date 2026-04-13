@@ -22,3 +22,6 @@ schema:
       entity: str
       max_price: float
       api_key: str?
+      forecast_entity: str?
+      target_time: str?
+      required_hours: float?

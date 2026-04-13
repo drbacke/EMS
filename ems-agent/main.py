@@ -8,6 +8,7 @@ import requests
 
 from adapters.ha_adapter import HomeAssistantAdapter
 from agents.consumer_agent import ConsumerAgent
+from agents.ev_agent import EvAgent
 from agents.grid_agent import GridAgent
 from core.broker import EnergyBroker
 
@@ -36,9 +37,9 @@ def build_dynamic_agents(
     device_configs: list[dict[str, Any]],
     ha_adapter: HomeAssistantAdapter,
     broker: EnergyBroker,
-) -> list[ConsumerAgent]:
+) -> list[object]:
     """Factory for runtime device -> agent creation and broker registration."""
-    buyers: list[ConsumerAgent] = []
+    buyers: list[object] = []
     for index, config in enumerate(device_configs, start=1):
         label = str(config.get("name", "")).strip() or f"device_{index}"
         device_type = str(config.get("type", "generic")).strip().lower()
@@ -63,12 +64,22 @@ def build_dynamic_agents(
             continue
 
         if device_type == "ev_charger":
-            # Future extension: instantiate EvAgent here.
-            consumer = ConsumerAgent(
+            forecast_entity = str(config.get("forecast_entity", "")).strip()
+            target_time = str(config.get("target_time", "07:00")).strip()
+            required_hours_raw = config.get("required_hours", 0.0)
+            try:
+                required_hours = float(required_hours_raw)
+            except (TypeError, ValueError):
+                required_hours = 0.0
+
+            consumer = EvAgent(
                 name=f"ev_charger:{label}",
                 entity_id=entity,
-                max_price_limit=max_price_limit,
                 ha_adapter=ha_adapter,
+                forecast_entity=forecast_entity,
+                target_time=target_time,
+                required_hours=required_hours,
+                max_price_limit=max_price_limit,
             )
         elif device_type == "heater":
             # Future extension: instantiate HeaterAgent here.
@@ -139,9 +150,9 @@ def main() -> None:
             if not results:
                 time.sleep(LOOP_INTERVAL_SECONDS)
                 continue
-            for consumer, result in zip(consumers, results):
-                if not consumer.is_available():
-                    print(f"[Main] Entitaet '{consumer.entity_id}' nicht gefunden.")
+            for buyer, result in zip(consumers, results):
+                if not buyer.is_available():
+                    print(f"[Main] Entitaet '{buyer.entity_id}' nicht gefunden.")
                     continue
 
                 print(
@@ -149,7 +160,7 @@ def main() -> None:
                     f"MaxBid={result.max_bid:.4f}, Match={result.matched}"
                 )
                 if result.matched:
-                    consumer.on_trade_match(result.market_price)
+                    buyer.on_trade_match(result.market_price)
         except (requests.RequestException, ValueError, KeyError, IndexError) as error:
             print(f"[Main] Fehler im Loop: {error}")
         time.sleep(LOOP_INTERVAL_SECONDS)
