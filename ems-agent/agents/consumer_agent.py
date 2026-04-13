@@ -7,11 +7,12 @@ class ConsumerAgent(BaseAgent):
 
     def __init__(
         self,
+        name: str,
         entity_id: str,
         max_price_limit: float,
         ha_adapter: HomeAssistantAdapter,
     ) -> None:
-        super().__init__("ConsumerAgent")
+        super().__init__(name)
         self.entity_id = entity_id
         self.max_price_limit = max_price_limit
         self.ha_adapter = ha_adapter
@@ -25,7 +26,7 @@ class ConsumerAgent(BaseAgent):
     def on_trade_match(self, market_price: float) -> None:
         self.ha_adapter.turn_on_entity(self.entity_id)
         print(
-            f"[ConsumerAgent] Trade accepted at {market_price:.4f}. "
+            f"[{self.name}] Trade accepted at {market_price:.4f}. "
             f"'{self.entity_id}' switched on."
         )
 

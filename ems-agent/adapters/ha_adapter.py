@@ -24,10 +24,16 @@ class HomeAssistantAdapter:
         return response.json()
 
     def turn_on_entity(self, entity_id: str) -> None:
+        self.call_service("homeassistant", "turn_on", {"entity_id": entity_id})
+
+    def turn_off_entity(self, entity_id: str) -> None:
+        self.call_service("homeassistant", "turn_off", {"entity_id": entity_id})
+
+    def call_service(self, domain: str, service: str, service_data: dict) -> None:
         response = requests.post(
-            f"{HA_API_URL}/services/homeassistant/turn_on",
+            f"{HA_API_URL}/services/{domain}/{service}",
             headers=self._headers,
-            json={"entity_id": entity_id},
+            json=service_data,
             timeout=10,
         )
         response.raise_for_status()

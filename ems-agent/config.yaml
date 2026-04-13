@@ -15,9 +15,10 @@ arch:
   - i386
 options:
   tibber_api_key: ""
-  target_entity: ""
-  max_price_limit: 0.30
+  agents: []
 schema:
   tibber_api_key: password?
-  target_entity: str
-  max_price_limit: float
+  agents:
+    - name: str
+      entity: str
+      max_price: float

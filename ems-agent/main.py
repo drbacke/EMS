@@ -2,6 +2,7 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -12,7 +13,7 @@ from core.broker import EnergyBroker
 
 OPTIONS_PATH = Path("/data/options.json")
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
-DEFAULT_MAX_PRICE_LIMIT = 0.30
+LOOP_INTERVAL_SECONDS = 10
 
 
 def load_options() -> dict:
@@ -28,49 +29,89 @@ def load_config_text() -> str:
     return CONFIG_PATH.read_text(encoding="utf-8")
 
 
+def build_dynamic_consumers(
+    agent_configs: list[dict[str, Any]],
+    ha_adapter: HomeAssistantAdapter,
+) -> list[ConsumerAgent]:
+    consumers: list[ConsumerAgent] = []
+    for index, config in enumerate(agent_configs, start=1):
+        agent_type = str(config.get("name", "")).strip().lower()
+        entity = str(config.get("entity", "")).strip()
+        max_price_raw = config.get("max_price", 0.0)
+
+        if not entity:
+            print(f"[Main] Ueberspringe Agent #{index}: 'entity' fehlt.")
+            continue
+
+        if agent_type in {"consumer", "consumeragent", ""}:
+            try:
+                max_price = float(max_price_raw)
+            except (TypeError, ValueError):
+                print(f"[Main] Ueberspringe Agent '{entity}': max_price ungueltig.")
+                continue
+
+            consumers.append(
+                ConsumerAgent(
+                    name=f"ConsumerAgent:{entity}",
+                    entity_id=entity,
+                    max_price_limit=max_price,
+                    ha_adapter=ha_adapter,
+                )
+            )
+        else:
+            print(f"[Main] Unbekannter Agent-Typ '{agent_type}' fuer Entity '{entity}'.")
+    return consumers
+
+
 def main() -> None:
     config_text = load_config_text()
     options = load_options()
 
     supervisor_token = os.getenv("SUPERVISOR_TOKEN")
-    target_entity = options.get("target_entity")
     tibber_api_key = options.get("tibber_api_key")
-    max_price_limit = float(options.get("max_price_limit", DEFAULT_MAX_PRICE_LIMIT))
+    agent_configs = options.get("agents", [])
 
-    if not target_entity:
-        raise ValueError("Missing required option: target_entity")
     if not supervisor_token:
         raise EnvironmentError("Missing environment variable: SUPERVISOR_TOKEN")
+    if not isinstance(agent_configs, list):
+        raise ValueError("Invalid option: 'agents' must be a list")
 
     ha_adapter = HomeAssistantAdapter(supervisor_token)
     grid_agent = GridAgent(tibber_api_key=tibber_api_key)
-    consumer_agent = ConsumerAgent(
-        entity_id=target_entity,
-        max_price_limit=max_price_limit,
-        ha_adapter=ha_adapter,
-    )
-    broker = EnergyBroker(seller=grid_agent, buyer=consumer_agent)
+    broker = EnergyBroker(seller=grid_agent)
+
+    consumers = build_dynamic_consumers(agent_configs, ha_adapter)
+    for consumer in consumers:
+        broker.register_buyer(consumer)
 
     print("EMS Entrypoint gestartet.")
     print(f"Config geladen: {'ja' if config_text else 'nein'}")
-    print(f"Target-Entity: {target_entity}")
-    print(f"Max-Preislimit: {max_price_limit}")
+    print(f"Konfigurierte Agenten: {len(consumers)}")
+
+    if not consumers:
+        print("[Main] Keine Agenten konfiguriert. Starte im Leerlauf.")
 
     while True:
         try:
-            if not consumer_agent.is_available():
-                print(f"[Main] Entitaet '{target_entity}' nicht gefunden.")
-            else:
-                result = broker.match()
+            if not consumers:
+                time.sleep(LOOP_INTERVAL_SECONDS)
+                continue
+
+            results = broker.match_all()
+            for consumer, result in zip(consumers, results):
+                if not consumer.is_available():
+                    print(f"[Main] Entitaet '{consumer.entity_id}' nicht gefunden.")
+                    continue
+
                 print(
-                    f"[Main] Marktpreis={result.market_price:.4f}, "
+                    f"[Main] {result.buyer_name} | Marktpreis={result.market_price:.4f}, "
                     f"MaxBid={result.max_bid:.4f}, Match={result.matched}"
                 )
                 if result.matched:
-                    consumer_agent.on_trade_match(result.market_price)
+                    consumer.on_trade_match(result.market_price)
         except (requests.RequestException, ValueError, KeyError, IndexError) as error:
             print(f"[Main] Fehler im Loop: {error}")
-        time.sleep(10)
+        time.sleep(LOOP_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
