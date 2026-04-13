@@ -22,7 +22,6 @@ def load_options() -> dict:
     with OPTIONS_PATH.open("r", encoding="utf-8") as file:
         loaded = json.load(file)
     return {
-        "grid_agent": loaded.get("grid_agent", {}),
         "devices": loaded.get("devices", []),
     }
 
@@ -33,20 +32,28 @@ def load_config_text() -> str:
     return CONFIG_PATH.read_text(encoding="utf-8")
 
 
-def build_dynamic_consumers(
+def build_dynamic_agents(
     device_configs: list[dict[str, Any]],
     ha_adapter: HomeAssistantAdapter,
+    broker: EnergyBroker,
 ) -> list[ConsumerAgent]:
-    """Factory for runtime device -> agent creation."""
-    consumers: list[ConsumerAgent] = []
+    """Factory for runtime device -> agent creation and broker registration."""
+    buyers: list[ConsumerAgent] = []
     for index, config in enumerate(device_configs, start=1):
         label = str(config.get("name", "")).strip() or f"device_{index}"
         device_type = str(config.get("type", "generic")).strip().lower()
         entity = str(config.get("entity", "")).strip()
         max_price_raw = config.get("max_price", 0.0)
+        api_key = str(config.get("api_key", "")).strip()
 
-        if not entity:
+        if device_type != "grid" and not entity:
             print(f"[Main] Ueberspringe Device #{index}: 'entity' fehlt.")
+            continue
+
+        if device_type == "grid":
+            # Future extension: choose specific grid provider implementation.
+            grid_agent = GridAgent(tibber_api_key=api_key or None)
+            broker.register_seller(grid_agent)
             continue
 
         try:
@@ -90,8 +97,9 @@ def build_dynamic_consumers(
             print(f"[Main] Unbekannter device type '{device_type}' bei '{label}'.")
             continue
 
-        consumers.append(consumer)
-    return consumers
+        broker.register_buyer(consumer)
+        buyers.append(consumer)
+    return buyers
 
 
 def main() -> None:
@@ -99,41 +107,27 @@ def main() -> None:
     options = load_options()
 
     supervisor_token = os.getenv("SUPERVISOR_TOKEN")
-    grid_agent_cfg = options.get("grid_agent", {})
     devices_cfg = options.get("devices", [])
 
     if not supervisor_token:
         raise EnvironmentError("Missing environment variable: SUPERVISOR_TOKEN")
-    if not isinstance(grid_agent_cfg, dict):
-        raise ValueError("Invalid option: 'grid_agent' must be an object")
     if not isinstance(devices_cfg, list):
         raise ValueError("Invalid option: 'devices' must be a list")
 
-    provider = str(grid_agent_cfg.get("provider", "simulation")).strip().lower()
-    api_key = str(grid_agent_cfg.get("api_key", "")).strip()
-
     ha_adapter = HomeAssistantAdapter(supervisor_token)
-    if provider == "tibber":
-        grid_agent = GridAgent(tibber_api_key=api_key or None)
-    elif provider == "simulation":
-        grid_agent = GridAgent(tibber_api_key=None)
-    else:
-        print(f"[Main] Unbekannter grid_agent.provider '{provider}', nutze simulation.")
-        grid_agent = GridAgent(tibber_api_key=None)
-    broker = EnergyBroker(seller=grid_agent)
-
-    consumers = build_dynamic_consumers(devices_cfg, ha_adapter)
-    for consumer in consumers:
-        broker.register_buyer(consumer)
+    broker = EnergyBroker()
+    consumers = build_dynamic_agents(devices_cfg, ha_adapter, broker)
 
     print("EMS Entrypoint gestartet.")
     print(f"Config geladen: {'ja' if config_text else 'nein'}")
-    print(f"Grid provider: {provider}")
     print(f"Devices: {len(devices_cfg)}")
+    print(f"Seller-Agenten: {len(broker.sellers)}")
     print(f"Konfigurierte Agenten: {len(consumers)}")
 
     if not consumers:
         print("[Main] Keine Agenten konfiguriert. Starte im Leerlauf.")
+    if not broker.sellers:
+        print("[Main] Kein Grid-Seller konfiguriert. Es werden keine Matches erstellt.")
 
     while True:
         try:
@@ -142,6 +136,9 @@ def main() -> None:
                 continue
 
             results = broker.match_all()
+            if not results:
+                time.sleep(LOOP_INTERVAL_SECONDS)
+                continue
             for consumer, result in zip(consumers, results):
                 if not consumer.is_available():
                     print(f"[Main] Entitaet '{consumer.entity_id}' nicht gefunden.")

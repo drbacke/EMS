@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 from agents.consumer_agent import ConsumerAgent
-from agents.grid_agent import GridAgent
 
 
 @dataclass
@@ -16,15 +15,33 @@ class MatchResult:
 class EnergyBroker:
     """Market broker that only matches bids and offers."""
 
-    def __init__(self, seller: GridAgent) -> None:
-        self.seller = seller
+    def __init__(self) -> None:
+        self.sellers: list[object] = []
         self.buyers: list[ConsumerAgent] = []
+
+    def register_seller(self, agent: object) -> None:
+        self.sellers.append(agent)
 
     def register_buyer(self, buyer: ConsumerAgent) -> None:
         self.buyers.append(buyer)
 
     def match_all(self) -> list[MatchResult]:
-        market_price = self.seller.get_current_price()
+        if not self.sellers:
+            return []
+
+        seller_prices: list[float] = []
+        for seller in self.sellers:
+            if not hasattr(seller, "get_current_price"):
+                continue
+            try:
+                seller_prices.append(float(seller.get_current_price()))
+            except (TypeError, ValueError):
+                continue
+
+        if not seller_prices:
+            return []
+
+        market_price = min(seller_prices)
         results: list[MatchResult] = []
         for buyer in self.buyers:
             max_bid = buyer.get_max_bid()

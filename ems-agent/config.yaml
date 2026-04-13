@@ -14,16 +14,11 @@ arch:
   - armv7
   - i386
 options:
-  grid_agent:
-    provider: simulation
-    api_key: ""
   devices: []
 schema:
-  grid_agent:
-    provider: list(tibber|simulation)
-    api_key: password?
   devices:
     - name: str
-      type: list(ev_charger|heater|battery|generic)
+      type: list(grid|ev_charger|heater|battery|generic)
       entity: str
       max_price: float
+      api_key: str?
